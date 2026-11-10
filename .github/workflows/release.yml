@@ -124,13 +124,21 @@ jobs:
           cp "$SRC" "dist/MeifengWubi-${VERSION}.apk"
           ls -lh dist
 
-      # 更新说明直接取 CHANGELOG.md 里对应版本的那一段
+      # 更新说明直接取 CHANGELOG.md 里对应版本的那一段；标题含 beta 时标记预览通道
       - name: 生成更新说明
+        id: notes
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           awk -v head="## v$VERSION" 'index($0, head) == 1 { show = 1; next } /^## v/ { show = 0 } show' CHANGELOG.md > notes.md || true
           if [ ! -s notes.md ]; then
             echo "v$VERSION" > notes.md
+          fi
+          if grep -Eq "^## v${VERSION}([[:space:]]|$).*beta" CHANGELOG.md; then
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+            echo "title=v${VERSION} beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "title=v${VERSION}" >> "$GITHUB_OUTPUT"
           fi
           cat notes.md
 
@@ -139,9 +147,10 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           CODE="${{ steps.version.outputs.code }}"
+          CHANNEL="${{ steps.notes.outputs.channel }}"
           HASH=$(sha256sum "dist/${ASSET_NAME}" | awk '{print $1}')
           SIZE=$(stat -c%s "dist/${ASSET_NAME}")
-          export VERSION CODE HASH SIZE NOTES_FILE=notes.md
+          export VERSION CODE HASH SIZE CHANNEL NOTES_FILE=notes.md
           python3 - <<'PY'
           import datetime, json, os
 
@@ -151,7 +160,7 @@ jobs:
           manifest = {
               "schema": 1,
               "platform": "android",
-              "channel": "stable",
+              "channel": os.environ.get("CHANNEL") or "stable",
               "version": os.environ["VERSION"],
               "build": int(os.environ["CODE"] or 0),
               "published_at": datetime.date.today().isoformat(),
@@ -183,8 +192,9 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          TITLE="v${{ steps.version.outputs.version }}"
+          TITLE="${{ steps.notes.outputs.title }}"
           VERSION="${{ steps.version.outputs.version }}"
+          CHANNEL="${{ steps.notes.outputs.channel }}"
 
           FILES=("dist/${ASSET_NAME}" "dist/MeifengWubi-${VERSION}.apk" "dist/update.json")
 
@@ -194,6 +204,7 @@ jobs:
           else
             gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes-file notes.md --latest
           fi
+          echo "通道：${CHANNEL}"
           echo "已发布：https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
           echo "固定下载：https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/${ASSET_NAME}"
           echo "更新清单：https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update.json"
