@@ -1,0 +1,7 @@
+Android librime static libraries are the fcitx5-android prebuilt archives
+(https://github.com/fcitx5-android/prebuilt), built from rime/librime and its
+dependencies (glog, yaml-cpp, leveldb, marisa, opencc, lua).
+
+librime and these dependencies are used under their upstream BSD / MIT / Apache
+licenses. The IME schema does not enable Lua translators; Lua is linked only
+because this prebuilt librime was compiled with the Lua plugin objects.

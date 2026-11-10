@@ -2,7 +2,7 @@
 
 与 [iOS 版](../wubi86-rime-ime-ios) 同一套 `wubi86_jidian` 词库和交互：仿系统三页键盘、候选栏、造词、候选排序、标点方案、云端用户词同步、局域网配置文件管理。
 
-Android 侧用码表引擎实现五笔检索（四码、唯一自动上屏、`z` 拼音反查、`date`/`time`/`week`），不嵌入 librime，避免键盘进程体积和内存超限。词库文件与 iOS `Resources/Rime` 同源。
+Android 侧与 iOS 一样使用 librime（`process_key`、码表编译、`wubi86_jidian`）。方案不启用 Lua。词库文件与 iOS `Resources/Rime` 同源。
 
 ## 结构
 
@@ -13,11 +13,13 @@ app/src/main/java/cn/kylebing/meifeng/wubi/
     sync/      门户云同步
     ui/        设置 App（启用、外观、输入、词库、账号、方案）
 app/src/main/assets/rime/   内置方案与词库
+app/src/main/cpp/           librime JNI，对应 iOS RimeBridge
+vendor/prebuilt/            librime 及依赖的 Android 静态库
 ```
 
 ## 编译
 
-需要本机 Android SDK（`compileSdk 35`）。
+需要本机 Android SDK（`compileSdk 35`）和 NDK `27.0.12077973`。
 
 ```bash
 echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
@@ -70,6 +72,6 @@ https://kylebing.cn/wubi/portal/
 | --- | --- |
 | 键盘扩展 | `InputMethodService` |
 | App Group 词库 | `files/rime/` |
-| librime + 码表 | `DictIndex` + `WubiEngine` |
+| librime + 码表 | librime（JNI） |
 | 设置容器 App | Compose 设置页 |
 | 局域网 HTTP 配置管理 | `RimeFileSyncServer` :8765 |

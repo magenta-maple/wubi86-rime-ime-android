@@ -24,7 +24,7 @@ import cn.kylebing.meifeng.wubi.data.WubiEngine
 class WubiImeService : InputMethodService(), KeyboardListener {
     private lateinit var keyboard: KeyboardView
     private lateinit var inputRoot: FrameLayout
-    private val engine = WubiEngine()
+    private val engine = WubiEngine.shared
     private val handler = Handler(Looper.getMainLooper())
     private var deleteRepeat: Runnable? = null
     private val quotePair = PunctuationPrefs.PairState()
@@ -50,7 +50,7 @@ class WubiImeService : InputMethodService(), KeyboardListener {
     override fun onCreate() {
         super.onCreate()
         AppPaths.init(this)
-        Thread { engine.start() }.start()
+        engine.post { engine.start() }
     }
 
     override fun onDestroy() {
@@ -90,10 +90,13 @@ class WubiImeService : InputMethodService(), KeyboardListener {
         keyboard.applyNight()
         keyboard.needsGlobe = shouldOfferSwitchingToNextInputMethod()
         syncKeyboardHeight()
-        if (UserDictWriter.consumeNeedsDeploy()) DictIndex.shared.reloadUser()
         cn.kylebing.meifeng.wubi.sync.UserDictAutoSync.activate()
-        if (!engine.isReady) Thread { engine.start(); handler.post { refreshCandidates() } }.start()
-        refreshCandidates()
+        engine.post {
+            val force = UserDictWriter.consumeNeedsDeploy()
+            engine.ensureStarted(force)
+            if (force && !engine.isReady) UserDictWriter.markNeedsDeploy()
+            publish()
+        }
     }
 
     // 沿用系统默认：窗口上半空白穿透，只有底部输入区接收触点。
@@ -144,9 +147,9 @@ class WubiImeService : InputMethodService(), KeyboardListener {
             KeyAction.Space -> handleSpace()
             KeyAction.Return -> handleReturn()
             KeyAction.Delete -> handleDelete()
-            KeyAction.ToggleLanguage -> {
-                engine.clearComposition()
-                refreshCandidates()
+            KeyAction.ToggleLanguage -> engine.post {
+                if (engine.isComposing) engine.clearComposition()
+                publish()
             }
             KeyAction.NextInput -> switchToNextInput()
             KeyAction.Dismiss -> requestHideSelf(0)
@@ -187,9 +190,11 @@ class WubiImeService : InputMethodService(), KeyboardListener {
 
     override fun onMoveCursor(offset: Int) {
         if (keyboard.pickingHanzi) return
-        if (engine.isComposing) {
-            engine.clearComposition()
-            refreshCandidates()
+        engine.post {
+            if (engine.isComposing) {
+                engine.clearComposition()
+                publish()
+            }
         }
         currentInputConnection?.commitText("", 0)
         val code = if (offset > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT
@@ -222,16 +227,24 @@ class WubiImeService : InputMethodService(), KeyboardListener {
             finishRank()
             return
         }
-        val pre = keyboard.preedit.ifEmpty { engine.preedit() }
-        if (pre.isNotEmpty()) {
-            val initial = displayed.firstOrNull().orEmpty()
-            engine.clearComposition()
-            refreshCandidates()
-            keyboard.beginAddWord(pre.lowercase(), initial)
-            return
+        val initial = displayed.firstOrNull().orEmpty()
+        val shown = keyboard.preedit
+        engine.post {
+            val pre = shown.ifEmpty { engine.preedit() }
+            if (pre.isNotEmpty()) {
+                engine.clearComposition()
+                val paint = engine.paint()
+                handler.post {
+                    applyPaint(paint)
+                    keyboard.beginAddWord(pre.lowercase(), initial)
+                }
+            } else {
+                handler.post {
+                    val chars = RecentHanziStore.characters.map { it.toString() }
+                    if (chars.isNotEmpty()) keyboard.beginPick(chars)
+                }
+            }
         }
-        val chars = RecentHanziStore.characters.map { it.toString() }
-        if (chars.isNotEmpty()) keyboard.beginPick(chars)
     }
 
     override fun onFinishPickHanzi(text: String) {
@@ -245,19 +258,28 @@ class WubiImeService : InputMethodService(), KeyboardListener {
     }
 
     override fun onCancelAddWord() {
-        engine.clearComposition()
         keyboard.endAddWord()
-        refreshCandidates()
+        engine.post {
+            engine.clearComposition()
+            publish()
+        }
     }
 
     override fun onSaveAddWord() {
         val code = keyboard.addWordCode
         val text = keyboard.addWordText
         if (code.isEmpty() || text.isEmpty()) return
-        runCatching { UserDictWriter.addEntry(UserDictEntry(code, text)) }
-        engine.clearComposition()
         keyboard.endAddWord()
-        refreshCandidates()
+        engine.post {
+            val saved = runCatching { UserDictWriter.addEntry(UserDictEntry(code, text)) }.isSuccess
+            if (saved) {
+                val deployed = engine.redeploy()
+                UserDictWriter.consumeNeedsDeploy()
+                if (!deployed) UserDictWriter.markNeedsDeploy()
+            }
+            engine.clearComposition()
+            publish()
+        }
     }
 
     override fun onAddWordChanged() {
@@ -265,11 +287,18 @@ class WubiImeService : InputMethodService(), KeyboardListener {
             keyboard.sameCode = emptyList()
             return
         }
-        keyboard.sameCode = engine.lookupTexts(keyboard.addWordCode)
-        keyboard.sameHighlight = keyboard.addWordText
-        // 同码条从一行提示变成可滚动列表时，键盘要跟着加高
-        onHeightChanged(keyboard.contentHeight)
-        keyboard.invalidate()
+        val code = keyboard.addWordCode
+        val highlight = keyboard.addWordText
+        engine.post {
+            val same = engine.lookupTexts(code)
+            handler.post {
+                if (!keyboard.addWord) return@post
+                keyboard.sameCode = same
+                keyboard.sameHighlight = highlight
+                onHeightChanged(keyboard.contentHeight)
+                keyboard.invalidate()
+            }
+        }
     }
 
     override fun onRank() {
@@ -326,53 +355,74 @@ class WubiImeService : InputMethodService(), KeyboardListener {
             }
             punctSymbols = emptyList()
         }
-        if (keyboard.addWord && keyboard.editingCode) {
-            engine.clearComposition()
+        val english = keyboard.english
+        val addWord = keyboard.addWord
+        val editingCode = keyboard.editingCode
+        val onSym = keyboard.page != KeyboardPage.Letters
+        val upper = (keyboard.shift || keyboard.caps) && text.any { it.isLetter() }
+        if (addWord && editingCode) {
+            engine.post {
+                engine.clearComposition()
+                publish()
+            }
             keyboard.appendAddWordCode(text)
             return
         }
-        if (keyboard.english) {
+        if (english) {
             insertCommitted(text)
             maybeCloseSymbol(text)
             return
         }
-        val onSym = keyboard.page != KeyboardPage.Letters
-        val isDigit = text.length == 1 && text[0].isDigit()
-        if (onSym && isDigit) {
-            if (engine.isComposing) engine.clearComposition()
-            insertCommitted(text)
-            maybeCloseSymbol(text)
-            refreshCandidates()
-            return
+        engine.post {
+            val composing = engine.isComposing
+            val digit = text.length == 1 && text[0].isDigit()
+            if (digit && (onSym || !composing)) {
+                if (composing) engine.clearComposition()
+                val paint = engine.paint()
+                handler.post {
+                    applyPaint(paint)
+                    insertCommitted(text)
+                    maybeCloseSymbol(text)
+                }
+                return@post
+            }
+            if (upper) {
+                if (composing) engine.clearComposition()
+                val paint = engine.paint()
+                handler.post {
+                    applyPaint(paint)
+                    insertCommitted(text.uppercase())
+                    maybeCloseSymbol(text)
+                }
+                return@post
+            }
+            if (!composing && PunctuationPrefs.item(text) != null) {
+                handler.post { applyPunct(text) }
+                return@post
+            }
+            val ch = text.firstOrNull()
+            if (ch != null && ch.isLetter() && ch.code < 127) {
+                engine.processLetter(ch)
+                deliverCommit(onSym, text)
+                return@post
+            }
+            if (digit && composing) {
+                engine.processKey(text[0].code)
+                deliverCommit(false, text)
+                return@post
+            }
+            handler.post {
+                insertCommitted(text)
+                maybeCloseSymbol(text)
+            }
         }
-        if ((keyboard.shift || keyboard.caps) && text.any { it.isLetter() }) {
-            if (engine.isComposing) engine.clearComposition()
-            insertCommitted(text.uppercase())
-            maybeCloseSymbol(text)
-            refreshCandidates()
-            return
-        }
-        if (shouldPunct(text)) {
-            applyPunct(text)
-            return
-        }
-        val ch = text.firstOrNull() ?: return
-        if (ch.isLetter() && ch.code < 127) {
-            engine.processLetter(ch)
-            if (engine.shouldClearEmptyCode()) engine.clearComposition()
-            consumeCommit()
-            if (onSym) maybeCloseSymbol(text)
-            return
-        }
-        insertCommitted(text)
-        maybeCloseSymbol(text)
     }
 
-    private fun shouldPunct(text: String): Boolean {
+    private fun shouldPunct(text: String, composing: Boolean = false): Boolean {
         if (keyboard.english) return false
         if (PunctuationPrefs.item(text) == null) return false
         if (keyboard.addWord && keyboard.editingCode) return false
-        if (engine.isComposing) return false
+        if (composing) return false
         return true
     }
 
@@ -451,15 +501,29 @@ class WubiImeService : InputMethodService(), KeyboardListener {
         if (keyboard.english) {
             insertCommitted(" "); return
         }
-        if (engine.isComposing) {
-            if (specialCount > 0 && displayed.isNotEmpty()) {
-                selectDisplayed(0); return
+        val addWord = keyboard.addWord
+        engine.post {
+            val paint = engine.paint()
+            if (engine.isComposing && paint.specialCount > 0 && paint.texts.isNotEmpty()) {
+                val text = paint.texts[0]
+                engine.clearComposition()
+                engine.noteLastCommit(text)
+                val next = engine.paint()
+                handler.post {
+                    insertCommitted(text)
+                    applyPaint(next)
+                }
+                return@post
             }
-            engine.processSpace()
-            consumeCommit()
-        } else if (keyboard.addWord) {
-            keyboard.appendAddWordText(" ")
-        } else insertCommitted(" ")
+            if (engine.isComposing) {
+                engine.processSpace()
+                deliverCommit(false, "")
+            } else if (addWord) {
+                handler.post { keyboard.appendAddWordText(" ") }
+            } else {
+                handler.post { insertCommitted(" ") }
+            }
+        }
     }
 
     private fun handleReturn() {
@@ -467,23 +531,38 @@ class WubiImeService : InputMethodService(), KeyboardListener {
             punctSymbols = emptyList()
             refreshCandidates()
         }
-        if (KeyboardPrefs.enterClearsCode && engine.isComposing) {
-            engine.clearComposition()
-            refreshCandidates()
-            return
+        val addWord = keyboard.addWord
+        val clears = KeyboardPrefs.enterClearsCode
+        engine.post {
+            if (clears && engine.isComposing) {
+                engine.clearComposition()
+                publish()
+                return@post
+            }
+            if (engine.isComposing) {
+                val text = engine.commitRaw()
+                val paint = engine.paint()
+                handler.post {
+                    if (!text.isNullOrEmpty()) insertCommitted(text)
+                    applyPaint(paint)
+                }
+            } else if (addWord) {
+                handler.post { onSaveAddWord() }
+            } else {
+                handler.post { performReturn() }
+            }
         }
-        if (engine.isComposing) commitRaw()
-        else if (keyboard.addWord) onSaveAddWord()
-        else {
-            val ic = currentInputConnection ?: return
-            val info = currentInputEditorInfo
-            val action = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
-            if (action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED &&
-                (info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) == 0
-            ) {
-                ic.performEditorAction(action)
-            } else insertCommitted("\n")
-        }
+    }
+
+    private fun performReturn() {
+        val ic = currentInputConnection ?: return
+        val info = currentInputEditorInfo
+        val action = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
+        if (action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED &&
+            (info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) == 0
+        ) {
+            ic.performEditorAction(action)
+        } else insertCommitted("\n")
     }
 
     private fun handleDelete() {
@@ -495,19 +574,28 @@ class WubiImeService : InputMethodService(), KeyboardListener {
         if (keyboard.pickingHanzi) {
             keyboard.undoPick(); return
         }
-        if (keyboard.addWord && keyboard.editingCode) {
-            engine.clearComposition()
+        val editingCode = keyboard.addWord && keyboard.editingCode
+        val addWord = keyboard.addWord
+        if (editingCode) {
+            engine.post {
+                engine.clearComposition()
+                publish()
+            }
             keyboard.deleteAddWord()
             return
         }
-        if (engine.isComposing) {
-            engine.processDelete()
-            consumeCommit()
-        } else if (keyboard.addWord) {
-            keyboard.deleteAddWord()
-        } else {
-            currentInputConnection?.deleteSurroundingText(1, 0)
-            if (caretTail.isNotEmpty()) caretTail = caretTail.dropLast(1)
+        engine.post {
+            if (engine.preedit().isNotEmpty()) {
+                engine.processDelete()
+                deliverCommit(false, "")
+            } else if (addWord) {
+                handler.post { keyboard.deleteAddWord() }
+            } else {
+                handler.post {
+                    currentInputConnection?.deleteSurroundingText(1, 0)
+                    if (caretTail.isNotEmpty()) caretTail = caretTail.dropLast(1)
+                }
+            }
         }
     }
 
@@ -524,17 +612,30 @@ class WubiImeService : InputMethodService(), KeyboardListener {
         RecentHanziStore.append(text)
     }
 
-    private fun consumeCommit() {
-        engine.commitText()?.takeIf { it.isNotEmpty() }?.let { insertCommitted(it) }
-        refreshCandidates()
+    private fun deliverCommit(closeSymbol: Boolean, symbolText: String) {
+        val commit = engine.commitText()
+        val paint = engine.paint()
+        handler.post {
+            if (!commit.isNullOrEmpty()) insertCommitted(commit)
+            applyPaint(paint)
+            if (closeSymbol) maybeCloseSymbol(symbolText)
+        }
+    }
+
+    private fun publish() {
+        val paint = engine.paint()
+        handler.post { applyPaint(paint) }
     }
 
     private fun commitRaw() {
-        val pre = engine.preedit()
-        if (pre.isEmpty()) return
-        engine.clearComposition()
-        insertCommitted(pre)
-        refreshCandidates()
+        engine.post {
+            val text = engine.commitRaw() ?: return@post
+            val paint = engine.paint()
+            handler.post {
+                insertCommitted(text)
+                applyPaint(paint)
+            }
+        }
     }
 
     private fun selectDisplayed(index: Int) {
@@ -543,34 +644,43 @@ class WubiImeService : InputMethodService(), KeyboardListener {
             return
         }
         if (index < 0 || index >= displayed.size) return
-        if (index < specialCount) {
-            val t = displayed[index]
-            engine.clearComposition()
-            engine.noteLastCommit(t)
-            insertCommitted(t)
-            refreshCandidates()
+        val special = specialCount
+        val chosen = displayed[index]
+        if (index < special) {
+            engine.post {
+                engine.clearComposition()
+                engine.noteLastCommit(chosen)
+                val paint = engine.paint()
+                handler.post {
+                    insertCommitted(chosen)
+                    applyPaint(paint)
+                }
+            }
             return
         }
-        engine.select(index - specialCount)
-        consumeCommit()
+        val rimeIndex = index - special
+        engine.post {
+            engine.select(rimeIndex)
+            deliverCommit(false, "")
+        }
     }
 
     private fun refreshCandidates() {
         if (punctSymbols.isNotEmpty()) return
-        val pre = engine.preedit()
-        val cands = engine.allCandidates()
-        val texts = cands.map { it.text }
-        val notes = cands.map { it.comment }
-        val special = DateTimeCandidates.candidates(pre)
-        specialCount = special?.size ?: 0
-        displayed = texts
-        displayedComments = notes
-        keyboard.preedit = pre
-        keyboard.candidates = texts
-        keyboard.comments = notes
+        engine.post { publish() }
+    }
+
+    private fun applyPaint(paint: WubiEngine.CandidatePaint) {
+        if (punctSymbols.isNotEmpty()) return
+        displayed = paint.texts
+        displayedComments = paint.comments
+        specialCount = paint.specialCount
+        keyboard.preedit = paint.preedit
+        keyboard.candidates = paint.texts
+        keyboard.comments = paint.comments
         keyboard.rankAvailable = canRank()
         keyboard.recentAvailable = RecentHanziStore.characters.isNotEmpty()
-        if (texts.isEmpty()) keyboard.expandVisible = false
+        if (paint.texts.isEmpty()) keyboard.expandVisible = false
         keyboard.invalidate()
     }
 
@@ -620,14 +730,21 @@ class WubiImeService : InputMethodService(), KeyboardListener {
     }
 
     private fun finishRank() {
-        keyboard.rankVisible = false
-        if (rankDirty) {
-            DictIndex.shared.reload()
-            engine.clearComposition()
-            engine.restore(rankCode)
-        }
+        val dirty = rankDirty
+        val code = rankCode
         rankDirty = false
         rankRows.clear()
-        refreshCandidates()
+        keyboard.rankVisible = false
+        engine.post {
+            if (dirty) {
+                val ok = engine.redeploy()
+                UserDictWriter.consumeNeedsDeploy()
+                if (!ok) UserDictWriter.markNeedsDeploy()
+                DictIndex.shared.reload()
+                engine.clearComposition()
+                engine.restore(code)
+            }
+            publish()
+        }
     }
 }

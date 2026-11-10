@@ -133,21 +133,37 @@ object RimeFileLayout {
 }
 
 object RimeConfigDeploy {
-    fun deployNow(): Result<Unit> {
+    fun deployNow(): Result<Unit> = WubiEngine.shared.call {
         RimeFileLayout.flattenNestedSchemeIfNeeded()
-        RimeFileLayout.validateSchemeRoot()?.let { return Result.failure(IllegalStateException(it)) }
-        return runCatching {
-            DictIndex.shared.reload()
-            WubiDictEncoder.clearCache()
-            runCatching { WubiDictEncoder.rebuildCharMap() }
-            UserDictWriter.markNeedsDeploy()
+        val invalid = RimeFileLayout.validateSchemeRoot()
+        if (invalid != null) {
+            Result.failure(IllegalStateException(invalid))
+        } else {
+            runCatching {
+                val ok = WubiEngine.shared.redeploy()
+                if (!ok) error("librime 部署失败")
+                UserDictWriter.consumeNeedsDeploy()
+                WubiDictEncoder.clearCache()
+                runCatching { WubiDictEncoder.rebuildCharMap() }
+                Unit
+            }
         }
     }
 
-    fun resetToFactory(): Result<Unit> = runCatching {
-        RimeFileStore.clearAll()
-        AppPaths.prefs.edit().remove("rime.bundled.stamp").apply()
-        RimeResourceDeployer.syncBundledIfNeeded(AppPaths.context)
-        deployNow().getOrThrow()
+    fun resetToFactory(): Result<Unit> = WubiEngine.shared.call {
+        runCatching {
+            WubiEngine.shared.stop()
+            RimeFileStore.clearAll()
+            AppPaths.prefs.edit().remove("rime.bundled.stamp").apply()
+            RimeResourceDeployer.copyBundled(AppPaths.context, overwriteUserDict = true)
+            AppPaths.prefs.edit().putInt("rime.bundled.stamp", 3).apply()
+            RimeResourceDeployer.disableSchemaAutoSelectIfNeeded(AppPaths.userDir)
+            WubiEngine.shared.start(forceFullCheck = true)
+            if (!WubiEngine.shared.isReady) error("librime 部署失败")
+            UserDictWriter.consumeNeedsDeploy()
+            WubiDictEncoder.clearCache()
+            runCatching { WubiDictEncoder.rebuildCharMap() }
+            Unit
+        }
     }
 }

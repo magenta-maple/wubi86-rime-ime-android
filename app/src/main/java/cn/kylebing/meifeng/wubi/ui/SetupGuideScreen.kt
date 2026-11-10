@@ -80,7 +80,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import cn.kylebing.meifeng.wubi.R
 import cn.kylebing.meifeng.wubi.data.AppPaths
-import cn.kylebing.meifeng.wubi.data.DictIndex
 import cn.kylebing.meifeng.wubi.data.KeyboardPrefs
 import cn.kylebing.meifeng.wubi.data.PunctuationPrefs
 import cn.kylebing.meifeng.wubi.data.RimeConfigDeploy
@@ -553,9 +552,15 @@ private fun SchemePage() {
             text = { Text("将清空当前配置与用户词，恢复内置方案。") },
             confirmButton = {
                 TextButton(onClick = {
-                    RimeResourceDeployer.resetToFactory(context)
-                    msg = "已恢复内置方案"
                     confirm = false
+                    msg = "正在恢复…"
+                    val main = android.os.Handler(android.os.Looper.getMainLooper())
+                    Thread {
+                        val result = runCatching { RimeResourceDeployer.resetToFactory(context) }
+                        main.post {
+                            msg = if (result.isSuccess) "已恢复内置方案" else (result.exceptionOrNull()?.message ?: "恢复失败")
+                        }
+                    }.start()
                 }) { Text("清空并恢复") }
             },
             dismissButton = { TextButton(onClick = { confirm = false }) { Text("取消") } }

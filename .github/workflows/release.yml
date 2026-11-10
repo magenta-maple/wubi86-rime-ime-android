@@ -66,7 +66,9 @@ jobs:
           "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK_ROOT" \
             "platform-tools" \
             "platforms;android-35" \
-            "build-tools;35.0.0"
+            "build-tools;35.0.0" \
+            "ndk;27.0.12077973" \
+            "cmake;3.22.1"
 
       # 版本号以 app/build.gradle.kts 为准，发版前先改版本再打标签
       - name: 读取版本

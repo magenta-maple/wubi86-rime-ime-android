@@ -1,1 +1,3 @@
-# 玫枫五笔 Android：默认不开启混淆
+-keep class cn.kylebing.meifeng.wubi.engine.RimeNative { *; }
+-keep class cn.kylebing.meifeng.wubi.engine.RimeSnapshot { *; }
+-keep class cn.kylebing.meifeng.wubi.engine.RimeCandidate { *; }

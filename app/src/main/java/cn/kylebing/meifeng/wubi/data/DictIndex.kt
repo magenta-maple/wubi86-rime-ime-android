@@ -5,8 +5,7 @@ import java.util.ArrayDeque
 import java.util.PriorityQueue
 
 /**
- * 码表索引：主词库 + 扩展 + 用户词 + 拼音反查。
- * 键盘进程内存预算有限，用前缀哈希而不是完整 librime。
+ * 码表备注和调权用的 YAML 索引。打字和部署走 librime，不从这里出候选。
  */
 class DictIndex private constructor() {
     data class Entry(
@@ -120,7 +119,6 @@ class DictIndex private constructor() {
         }
         file.writeText(lines.joinToString("\n", postfix = "\n"))
         UserDictWriter.markNeedsDeploy()
-        reload()
     }
 
     fun displayNotes(texts: List<String>, preedit: String): List<String> {

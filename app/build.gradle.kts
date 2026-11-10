@@ -7,6 +7,7 @@ plugins {
 android {
     namespace = "cn.kylebing.meifeng.wubi"
     compileSdk = 35
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "cn.kylebing.meifeng.wubi"
@@ -14,6 +15,15 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "1.0.1"
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                arguments += "-DANDROID_STL=c++_shared"
+                cppFlags += "-frtti -fexceptions -std=c++17"
+            }
+        }
     }
 
     // CI 有 ANDROID_KEYSTORE_* 时签正式包；本地 / 未配密钥时用 debug 签名，方便出 release APK
@@ -48,6 +58,12 @@ android {
     buildFeatures {
         compose = true
         viewBinding = false
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 }
 
