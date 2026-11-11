@@ -908,7 +908,7 @@ class KeyboardView(context: Context) : View(context) {
             textPaint.textSize = dp(8f)
             textPaint.typeface = Typeface.MONOSPACE
             textPaint.color = theme.title
-            textPaint.alpha = 128
+            textPaint.alpha = 255
             val code = middleTruncate(preedit, max(dp(12f), wordW))
             val codeW = textPaint.measureText(code)
             // 相对首个词条绝对定位：贴在词条上方，空隙比贴住时多一点
