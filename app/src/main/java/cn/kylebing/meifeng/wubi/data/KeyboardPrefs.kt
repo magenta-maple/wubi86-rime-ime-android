@@ -9,7 +9,7 @@ object KeyboardPrefs {
     const val KEY_PRESS_HOLD_MAX_MS = 400
     const val KEY_PRESS_HOLD_DEFAULT_MS = 80
     const val DELETE_REPEAT_MAX = 4
-    const val DELETE_REPEAT_DEFAULT = 2
+    const val DELETE_REPEAT_DEFAULT = 3
 
     val accentPresets = listOf(
         "F95353", "FF3B30", "FF9500", "FFCC00", "34C759",
@@ -25,9 +25,9 @@ object KeyboardPrefs {
     var hapticIntensityLevel: Int
         get() {
             if (p.contains("keyboard.haptic.intensity.level")) {
-                return p.getInt("keyboard.haptic.intensity.level", 2).coerceIn(0, HAPTIC_MAX)
+                return p.getInt("keyboard.haptic.intensity.level", 1).coerceIn(0, HAPTIC_MAX)
             }
-            return 2
+            return 1
         }
         set(v) { p.edit().putInt("keyboard.haptic.intensity.level", v.coerceIn(0, HAPTIC_MAX)).apply() }
 
@@ -48,8 +48,8 @@ object KeyboardPrefs {
     }
 
     var closesSymbolPageAfterInput: Boolean
-        get() = if (!p.contains("keyboard.symbolPage.dismissAfterInput")) true
-        else p.getBoolean("keyboard.symbolPage.dismissAfterInput", true)
+        get() = if (!p.contains("keyboard.symbolPage.dismissAfterInput")) false
+        else p.getBoolean("keyboard.symbolPage.dismissAfterInput", false)
         // commit：设置页与键盘同进程也立刻落盘，避免切换输入框前读到旧值
         set(v) { p.edit().putBoolean("keyboard.symbolPage.dismissAfterInput", v).commit() }
 

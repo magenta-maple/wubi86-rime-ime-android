@@ -13,7 +13,7 @@ android {
         applicationId = "cn.kylebing.meifeng.wubi"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
+        versionCode = 4
         versionName = "2.0.0"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")

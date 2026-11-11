@@ -538,7 +538,7 @@ private fun SchemePage() {
     Column(Modifier.fillMaxSize()) {
         SettingsCard(title = "当前方案") {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("方案 wubi86_jidian（无 Lua）")
+                Text("方案 wubi86_jidian")
                 Text("词库目录：${cn.kylebing.meifeng.wubi.data.AppPaths.userDir.path}", style = MaterialTheme.typography.bodySmall)
                 Button(onClick = { confirm = true }) { Text("复位原始配置") }
                 if (msg.isNotEmpty()) Text(msg)
